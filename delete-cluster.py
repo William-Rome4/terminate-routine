@@ -9,6 +9,7 @@ now = dt.now()
 group_name = f"unbh-poc-routine-logs"
 
 aws = boto3.client('sts', region_name = region)
+cf = boto3.client('cloudformation', region_name = region)
 logs = boto3.client('logs', region_name = region)
 tags = boto3.client('resourcegroupstaggingapi', region_name=region)
 
@@ -49,7 +50,7 @@ def search_resources():
     )
     for item in response['ResourceTagMappingList']:
         tag = [tag['Value'] for tag in item['Tags'] if tag['Key'] == 'Terminate']
-        tagged_resources.append({'ARN': item['ResourceARN'], 'TERMINATE': tag[0]})
+        tagged_resources.append({'ARN': item['ResourceARN'], 'TERMINATE': tag[0], 'TAGS': item['Tags']})
 
     for resource in tagged_resources:
         service = resource['ARN'].split(":")[2]
@@ -65,15 +66,15 @@ def search_resources():
         print(f"[INFO] Terminate on {terminate.strftime('%d/%m/%Y')}")
 
         if dif.days+1 == schedule[0]:
-            print("[INFO] Uma semana até o terminate")
+            print("[INFO] One week until termination date")
             resource['MESSAGE'] = f"Recurso será terminado em {schedule[0]} dias"
             send_alert(service,resource,schedule[0])
         elif dif.days+1 == schedule[1]:
-            print("[INFO] 3 dias até o terminate")
+            print("[INFO] 3 days until termination date")
             resource['MESSAGE'] = f"Recurso será terminado em {schedule[1]} dias"
             send_alert(service,resource,schedule[1])
         elif dif.days+1 == schedule[2]:
-            print("[INFO] Realizando o terminate do recurso")
+            print("[INFO] Starting resource termination")
             resource['MESSAGE'] = f"Realizando o terminate do recurso"
             send_alert(service,resource,schedule[2])
             delete_resource(service,resource)
@@ -106,13 +107,20 @@ def send_alert(service,resource,schedule):
 
 def delete_resource(service,resource):
     try:
-        client = boto3.client(service,region_name=region)
-        if service == "ecs":
-            print(f"[DELETE] Realizando delete do cluster {resource['ARN'].split('/')[1]}")
-            response = client.delete_cluster(
-                cluster=resource['ARN']
-            )
-            print(response)
+        stack_name = [tag['Value'] for tag in resource['TAGS'] if tag['Key'] == 'aws:cloudformation:stack-name']
+        print(f"[INFO] Resource belongs to Stack: '{stack_name[0]}'")
+        if stack_name:
+            print("[HALT] Deleting Stack...")
+            response = cf.delete_stack(
+                StackName=stack_name[0],
+            )         
+        else:
+            client = boto3.client(service,region_name=region)
+            if service == "ecs":
+                print(f"[DELETE] Realizando delete do cluster {resource['ARN'].split('/')[1]}")
+                response = client.delete_cluster(
+                    cluster=resource['ARN']
+                )
     except Exception as e:
         print(e)
 
